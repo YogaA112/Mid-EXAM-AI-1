@@ -1,0 +1,50 @@
+#!/usr/bin/stap
+
+/**
+ * Tested on Linux 3.10 (CentOS 7)
+ */
+
+global fault_entry_time, fault_latency_all, fault_latency_type
+
+function vm_fault_str(fault_type: long) {
+    if(vm_fault_contains(fault_type, VM_FAULT_OOM))
+        return "OOM";
+    else if(vm_fault_contains(fault_type, VM_FAULT_SIGBUS))
+        return "SIGBUS";
+    else if(vm_fault_contains(fault_type, VM_FAULT_MINOR))
+        return "MINOR";
+    else if(vm_fault_contains(fault_type, VM_FAULT_MAJOR))
+        return "MAJOR";
+    else if(vm_fault_contains(fault_type, VM_FAULT_NOPAGE))
+        return "NOPAGE";
+    else if(vm_fault_contains(fault_type, VM_FAULT_LOCKED))
+        return "LOCKED";
+    else if(vm_fault_contains(fault_type, VM_FAULT_ERROR))
+        return "ERROR";
+    return "???";
+}
+
+probe vm.pagefault {
+	if (pid() == target()) {
+		fault_entry_time[tid()] = gettimeofday_us()
+	}
+}
+
+probe vm.pagefault.return {
+	if (!(tid() in fault_entry_time)) next
+	latency = gettimeofday_us() - fault_entry_time[tid()]
+	fault_latency_all <<< latency
+	fault_latency_type[vm_fault_str(fault_type)] <<< latency
+}
+
+probe timer.s(10) {
+	print("All:\n")
+	print(@hist_log(fault_latency_all))
+	delete(fault_latency_all)
+
+	foreach (type in fault_latency_type+) {
+		print(type,":\n")
+                print(@hist_log(fault_latency_type[type]))
+        }
+        delete(fault_latency_type)
+}
